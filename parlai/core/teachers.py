@@ -857,7 +857,7 @@ class StreamDialogData(DialogData):
                     self.entry_idx = 0
                 else:
                     self.entry_idx += 1
-                end_of_data = episode_done and self.next_episode is -1
+                end_of_data = episode_done and self.next_episode == -1
                 if end_of_data and self.cycle:
                     self.next_episode = next(self.data)
 

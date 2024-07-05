@@ -2,20 +2,20 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import math
+import os
+import pickle as pkl
+from collections import OrderedDict
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import os
-import math
-import pickle as pkl
-from collections import OrderedDict
-import numpy as np
-
+from parlai.agents.kbrd.kbrd import _load_kg_embeddings
+from parlai.agents.kbrd.modules import KBRD
 from parlai.core.torch_generator_agent import TorchGeneratorModel
 from parlai.core.utils import neginf
-from parlai.agents.kbrd.modules import KBRD
-from parlai.agents.kbrd.kbrd import _load_kg_embeddings
 
 
 def _normalize(tensor, norm_layer):
@@ -27,52 +27,64 @@ def _normalize(tensor, norm_layer):
 def _create_embeddings(dictionary, embedding_size, padding_idx):
     """Create and initialize word embeddings."""
     e = nn.Embedding(len(dictionary), embedding_size, padding_idx)
-    nn.init.normal_(e.weight, mean=0, std=embedding_size ** -0.5)
+    nn.init.normal_(e.weight, mean=0, std=embedding_size**-0.5)
     nn.init.constant_(e.weight[padding_idx], 0)
     return e
 
 
-def _build_encoder(opt, dictionary, embedding=None, padding_idx=None, reduction=True,
-                   n_positions=1024):
+def _build_encoder(
+    opt,
+    dictionary,
+    embedding=None,
+    padding_idx=None,
+    reduction=True,
+    n_positions=1024,
+):
     return TransformerEncoder(
-        n_heads=opt['n_heads'],
-        n_layers=opt['n_layers'],
-        embedding_size=opt['embedding_size'],
-        ffn_size=opt['ffn_size'],
+        n_heads=opt["n_heads"],
+        n_layers=opt["n_layers"],
+        embedding_size=opt["embedding_size"],
+        ffn_size=opt["ffn_size"],
         vocabulary_size=len(dictionary),
         embedding=embedding,
-        dropout=opt['dropout'],
-        attention_dropout=opt['attention_dropout'],
-        relu_dropout=opt['relu_dropout'],
+        dropout=opt["dropout"],
+        attention_dropout=opt["attention_dropout"],
+        relu_dropout=opt["relu_dropout"],
         padding_idx=padding_idx,
-        learn_positional_embeddings=opt.get('learn_positional_embeddings', False),
-        embeddings_scale=opt['embeddings_scale'],
+        learn_positional_embeddings=opt.get(
+            "learn_positional_embeddings", False
+        ),
+        embeddings_scale=opt["embeddings_scale"],
         reduction=reduction,
         n_positions=n_positions,
     )
 
 
-def _build_decoder(opt, dictionary, embedding=None, padding_idx=None,
-                   n_positions=1024):
+def _build_decoder(
+    opt, dictionary, embedding=None, padding_idx=None, n_positions=1024
+):
     return TransformerDecoder(
-        n_heads=opt['n_heads'],
-        n_layers=opt['n_layers'],
-        embedding_size=opt['embedding_size'],
-        ffn_size=opt['ffn_size'],
+        n_heads=opt["n_heads"],
+        n_layers=opt["n_layers"],
+        embedding_size=opt["embedding_size"],
+        ffn_size=opt["ffn_size"],
         vocabulary_size=len(dictionary),
         embedding=embedding,
-        dropout=opt['dropout'],
-        attention_dropout=opt['attention_dropout'],
-        relu_dropout=opt['relu_dropout'],
+        dropout=opt["dropout"],
+        attention_dropout=opt["attention_dropout"],
+        relu_dropout=opt["relu_dropout"],
         padding_idx=padding_idx,
-        learn_positional_embeddings=opt.get('learn_positional_embeddings', False),
-        embeddings_scale=opt['embeddings_scale'],
+        learn_positional_embeddings=opt.get(
+            "learn_positional_embeddings", False
+        ),
+        embeddings_scale=opt["embeddings_scale"],
         n_positions=n_positions,
     )
 
 
 class TransformerMemNetModel(nn.Module):
     """Model which takes context, memories, candidates and encodes them"""
+
     def __init__(self, opt, dictionary):
         super().__init__()
         self.opt = opt
@@ -80,53 +92,61 @@ class TransformerMemNetModel(nn.Module):
 
         # set up embeddings
         self.embeddings = _create_embeddings(
-            dictionary, opt['embedding_size'], self.pad_idx
+            dictionary, opt["embedding_size"], self.pad_idx
         )
 
-        if not opt.get('learn_embeddings'):
+        if not opt.get("learn_embeddings"):
             self.embeddings.weight.requires_grad = False
 
-        if opt.get('n_positions'):
+        if opt.get("n_positions"):
             # if the number of positions is explicitly provided, use that
-            n_positions = opt['n_positions']
+            n_positions = opt["n_positions"]
         else:
             # else, use the worst case from truncate
             n_positions = max(
-                opt.get('truncate') or 0,
-                opt.get('text_truncate') or 0,
-                opt.get('label_truncate') or 0
+                opt.get("truncate") or 0,
+                opt.get("text_truncate") or 0,
+                opt.get("label_truncate") or 0,
             )
             if n_positions == 0:
                 # default to 1024
                 n_positions = 1024
 
         if n_positions < 0:
-            raise ValueError('n_positions must be positive')
+            raise ValueError("n_positions must be positive")
 
         self.context_encoder = _build_encoder(
-            opt, dictionary, self.embeddings, self.pad_idx,
+            opt,
+            dictionary,
+            self.embeddings,
+            self.pad_idx,
             n_positions=n_positions,
         )
 
-        if opt.get('share_encoders'):
+        if opt.get("share_encoders"):
             self.cand_encoder = TransformerResponseWrapper(
-                self.context_encoder, self.context_encoder.out_dim,
+                self.context_encoder,
+                self.context_encoder.out_dim,
             )
         else:
             self.cand_encoder = _build_encoder(
-                opt, dictionary, self.embeddings, self.pad_idx, reduction=True,
+                opt,
+                dictionary,
+                self.embeddings,
+                self.pad_idx,
+                reduction=True,
                 n_positions=n_positions,
             )
 
         # build memory encoder
-        if opt.get('wrap_memory_encoder', False):
+        if opt.get("wrap_memory_encoder", False):
             self.memory_transformer = TransformerResponseWrapper(
                 self.context_encoder, self.context_encoder.out_dim
             )
         else:
             self.memory_transformer = self.context_encoder
 
-        self.attender = BasicAttention(dim=2, attn=opt['memory_attention'])
+        self.attender = BasicAttention(dim=2, attn=opt["memory_attention"])
 
     def encode_cand(self, words):
         if words is None:
@@ -172,7 +192,7 @@ class TransformerMemNetModel(nn.Module):
         weights, context_h = self.encode_context_memory(xs, mems)
         cands_h = self.encode_cand(cands)
 
-        if self.opt['normalize_sent_emb']:
+        if self.opt["normalize_sent_emb"]:
             context_h = context_h / context_h.norm(2, dim=1, keepdim=True)
             cands_h = cands_h / cands_h.norm(2, dim=1, keepdim=True)
 
@@ -180,27 +200,29 @@ class TransformerMemNetModel(nn.Module):
 
 
 def create_position_codes(n_pos, dim, out):
-    position_enc = np.array([
-        [pos / np.power(10000, 2 * j / dim) for j in range(dim // 2)]
-        for pos in range(n_pos)
-    ])
+    position_enc = np.array(
+        [
+            [pos / np.power(10000, 2 * j / dim) for j in range(dim // 2)]
+            for pos in range(n_pos)
+        ]
+    )
 
-    out[:, 0::2] = torch.FloatTensor(np.sin(position_enc)).type_as(out)
-    out[:, 1::2] = torch.FloatTensor(np.cos(position_enc)).type_as(out)
+    with torch.no_grad():
+        out[:, 0::2] = torch.FloatTensor(np.sin(position_enc)).type_as(out)
+        out[:, 1::2] = torch.FloatTensor(np.cos(position_enc)).type_as(out)
     out.detach_()
     out.requires_grad = False
 
 
 class TransformerResponseWrapper(nn.Module):
     """Transformer response rapper. Pushes input through transformer and MLP"""
+
     def __init__(self, transformer, hdim):
         super(TransformerResponseWrapper, self).__init__()
         dim = transformer.out_dim
         self.transformer = transformer
         self.mlp = nn.Sequential(
-            nn.Linear(dim, hdim),
-            nn.ReLU(),
-            nn.Linear(hdim, dim)
+            nn.Linear(dim, hdim), nn.ReLU(), nn.Linear(hdim, dim)
         )
 
     def forward(self, *args):
@@ -233,6 +255,7 @@ class TransformerEncoder(nn.Module):
         sequence.
     :param int n_positions: Size of the position embeddings matrix.
     """
+
     def __init__(
         self,
         n_heads,
@@ -248,7 +271,7 @@ class TransformerEncoder(nn.Module):
         learn_positional_embeddings=False,
         embeddings_scale=False,
         reduction=True,
-        n_positions=1024
+        n_positions=1024,
     ):
         super(TransformerEncoder, self).__init__()
 
@@ -264,13 +287,15 @@ class TransformerEncoder(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         self.out_dim = embedding_size
-        assert embedding_size % n_heads == 0, \
-            'Transformer embedding size must be a multiple of n_heads'
+        assert (
+            embedding_size % n_heads == 0
+        ), "Transformer embedding size must be a multiple of n_heads"
 
         # check input formats:
         if embedding is not None:
             assert (
-                embedding_size is None or embedding_size == embedding.weight.shape[1]
+                embedding_size is None
+                or embedding_size == embedding.weight.shape[1]
             ), "Embedding dim must match the embedding size."
 
         if embedding is not None:
@@ -281,32 +306,40 @@ class TransformerEncoder(nn.Module):
             self.embeddings = nn.Embedding(
                 vocabulary_size, embedding_size, padding_idx=padding_idx
             )
-            nn.init.normal_(self.embeddings.weight, 0, embedding_size ** -0.5)
+            nn.init.normal_(self.embeddings.weight, 0, embedding_size**-0.5)
 
         # create the positional embeddings
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
             create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
+                n_positions,
+                embedding_size,
+                out=self.position_embeddings.weight,
             )
         else:
-            nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
+            nn.init.normal_(
+                self.position_embeddings.weight, 0, embedding_size**-0.5
+            )
 
         # build the model
         self.layers = nn.ModuleList()
         for _ in range(self.n_layers):
-            self.layers.append(TransformerEncoderLayer(
-                n_heads, embedding_size, ffn_size,
-                attention_dropout=attention_dropout,
-                relu_dropout=relu_dropout,
-                dropout=dropout,
-            ))
+            self.layers.append(
+                TransformerEncoderLayer(
+                    n_heads,
+                    embedding_size,
+                    ffn_size,
+                    attention_dropout=attention_dropout,
+                    relu_dropout=relu_dropout,
+                    dropout=dropout,
+                )
+            )
 
     def forward(self, input):
         """
-            input data is a FloatTensor of shape [batch, seq_len, dim]
-            mask is a ByteTensor of shape [batch, seq_len], filled with 1 when
-            inside the sequence and 0 outside.
+        input data is a FloatTensor of shape [batch, seq_len, dim]
+        mask is a ByteTensor of shape [batch, seq_len], filled with 1 when
+        inside the sequence and 0 outside.
         """
         mask = input != self.padding_idx
         positions = (mask.cumsum(dim=1, dtype=torch.int64) - 1).clamp_(min=0)
@@ -322,7 +355,9 @@ class TransformerEncoder(nn.Module):
             tensor = self.layers[i](tensor, mask)
 
         if self.reduction:
-            divisor = mask.type_as(tensor).sum(dim=1).unsqueeze(-1).clamp(min=1e-7)
+            divisor = (
+                mask.type_as(tensor).sum(dim=1).unsqueeze(-1).clamp(min=1e-7)
+            )
             output = tensor.sum(dim=1) / divisor
             return output
         else:
@@ -344,11 +379,14 @@ class TransformerEncoderLayer(nn.Module):
         self.dim = embedding_size
         self.ffn_dim = ffn_size
         self.attention = MultiHeadAttention(
-            n_heads, embedding_size,
+            n_heads,
+            embedding_size,
             dropout=attention_dropout,  # --attention-dropout
         )
         self.norm1 = nn.LayerNorm(embedding_size)
-        self.ffn = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
+        self.ffn = TransformerFFN(
+            embedding_size, ffn_size, relu_dropout=relu_dropout
+        )
         self.norm2 = nn.LayerNorm(embedding_size)
         self.dropout = nn.Dropout(p=dropout)
 
@@ -412,8 +450,9 @@ class TransformerDecoder(nn.Module):
         self.dropout = nn.Dropout(p=dropout)  # --dropout
 
         self.out_dim = embedding_size
-        assert embedding_size % n_heads == 0, \
-            'Transformer embedding size must be a multiple of n_heads'
+        assert (
+            embedding_size % n_heads == 0
+        ), "Transformer embedding size must be a multiple of n_heads"
 
         self.embeddings = embedding
 
@@ -421,20 +460,28 @@ class TransformerDecoder(nn.Module):
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
             create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
+                n_positions,
+                embedding_size,
+                out=self.position_embeddings.weight,
             )
         else:
-            nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
+            nn.init.normal_(
+                self.position_embeddings.weight, 0, embedding_size**-0.5
+            )
 
         # build the model
         self.layers = nn.ModuleList()
         for _ in range(self.n_layers):
-            self.layers.append(TransformerDecoderLayer(
-                n_heads, embedding_size, ffn_size,
-                attention_dropout=attention_dropout,
-                relu_dropout=relu_dropout,
-                dropout=dropout,
-            ))
+            self.layers.append(
+                TransformerDecoderLayer(
+                    n_heads,
+                    embedding_size,
+                    ffn_size,
+                    attention_dropout=attention_dropout,
+                    relu_dropout=relu_dropout,
+                    dropout=dropout,
+                )
+            )
 
     def forward(self, input, encoder_state, incr_state=None):
         encoder_output, encoder_mask = encoder_state
@@ -479,7 +526,9 @@ class TransformerDecoderLayer(nn.Module):
         )
         self.norm2 = nn.LayerNorm(embedding_size)
 
-        self.ffn = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
+        self.ffn = TransformerFFN(
+            embedding_size, ffn_size, relu_dropout=relu_dropout
+        )
         self.norm3 = nn.LayerNorm(embedding_size)
 
     def forward(self, x, encoder_output, encoder_mask):
@@ -497,7 +546,7 @@ class TransformerDecoderLayer(nn.Module):
             query=x,
             key=encoder_output,
             value=encoder_output,
-            mask=encoder_mask
+            mask=encoder_mask,
         )
         x = self.dropout(x)  # --dropout
         x = residual + x
@@ -530,48 +579,65 @@ class TransformerGeneratorModel(TorchGeneratorModel):
         self.end_idx = dictionary[dictionary.end_token]
         super().__init__(self.pad_idx, self.start_idx, self.end_idx)
         self.embeddings = _create_embeddings(
-            dictionary, opt['embedding_size'], self.pad_idx
+            dictionary, opt["embedding_size"], self.pad_idx
         )
 
-        if opt.get('n_positions'):
+        if opt.get("n_positions"):
             # if the number of positions is explicitly provided, use that
-            n_positions = opt['n_positions']
+            n_positions = opt["n_positions"]
         else:
             # else, use the worst case from truncate
             n_positions = max(
-                opt.get('truncate') or 0,
-                opt.get('text_truncate') or 0,
-                opt.get('label_truncate') or 0
+                opt.get("truncate") or 0,
+                opt.get("text_truncate") or 0,
+                opt.get("label_truncate") or 0,
             )
             if n_positions == 0:
                 # default to 1024
                 n_positions = 1024
 
         if n_positions < 0:
-            raise ValueError('n_positions must be positive')
+            raise ValueError("n_positions must be positive")
 
         self.encoder = _build_encoder(
-            opt, dictionary, self.embeddings, self.pad_idx, reduction=False,
+            opt,
+            dictionary,
+            self.embeddings,
+            self.pad_idx,
+            reduction=False,
             n_positions=n_positions,
         )
         self.decoder = _build_decoder(
-            opt, dictionary, self.embeddings, self.pad_idx,
+            opt,
+            dictionary,
+            self.embeddings,
+            self.pad_idx,
             n_positions=n_positions,
         )
         kg = pkl.load(
             open(os.path.join(opt["datapath"], "redial", "subkg.pkl"), "rb")
         )
         entity2entityId = pkl.load(
-            open(os.path.join(opt["datapath"], "redial", "entity2entityId.pkl"), "rb")
+            open(
+                os.path.join(opt["datapath"], "redial", "entity2entityId.pkl"),
+                "rb",
+            )
         )
-        self.kbrd = KBRD(opt['n_entity'],opt['n_relation'],opt['dim'], kg, None, None, num_bases=8)
-        state_dict = torch.load('saved/both_rgcn_0')['model']
+        self.kbrd = KBRD(
+            opt["n_entity"],
+            opt["n_relation"],
+            opt["dim"],
+            kg,
+            None,
+            None,
+            num_bases=8,
+        )
+        state_dict = torch.load("saved/both_rgcn_0")["model"]
         self.kbrd.load_state_dict(state_dict)
-        self.user_representation_to_bias_1 = nn.Linear(opt['dim'], 512)
+        self.user_representation_to_bias_1 = nn.Linear(opt["dim"], 512)
         self.user_representation_to_bias_2 = nn.Linear(512, len(dictionary))
         for param in self.kbrd.parameters():
             param.requires_grad = False
-
 
     def reorder_encoder_states(self, encoder_states, indices):
         enc, mask = encoder_states
@@ -588,8 +654,14 @@ class TransformerGeneratorModel(TorchGeneratorModel):
     def output(self, tensor):
         # project back to vocabulary
         output = F.linear(tensor, self.embeddings.weight)
-        if hasattr(self, 'user_representation'):
-            up_bias = self.user_representation_to_bias_2(F.relu(self.user_representation_to_bias_1(self.user_representation)))
+        if hasattr(self, "user_representation"):
+            up_bias = self.user_representation_to_bias_2(
+                F.relu(
+                    self.user_representation_to_bias_1(
+                        self.user_representation
+                    )
+                )
+            )
             # Expand to the whole sequence
             up_bias = up_bias.unsqueeze(dim=1)
             output += up_bias
@@ -597,20 +669,20 @@ class TransformerGeneratorModel(TorchGeneratorModel):
 
 
 class BasicAttention(nn.Module):
-    def __init__(self, dim=1, attn='cosine'):
+    def __init__(self, dim=1, attn="cosine"):
         super().__init__()
         self.softmax = nn.Softmax(dim=dim)
-        if attn == 'cosine':
+        if attn == "cosine":
             self.cosine = nn.CosineSimilarity(dim=dim)
         self.attn = attn
         self.dim = dim
 
     def forward(self, xs, ys):
-        if self.attn == 'cosine':
+        if self.attn == "cosine":
             l1 = self.cosine(xs, ys).unsqueeze(self.dim - 1)
         else:
             l1 = torch.bmm(xs, ys.transpose(1, 2))
-            if self.attn == 'sqrt':
+            if self.attn == "sqrt":
                 d_k = ys.size(-1)
                 l1 = l1 / math.sqrt(d_k)
         l2 = self.softmax(l1)
@@ -644,9 +716,10 @@ class MultiHeadAttention(nn.Module):
         # Input is [B, query_len, dim]
         # Mask is [B, key_len] (selfattn) or [B, key_len, key_len] (enc attn)
         batch_size, query_len, dim = query.size()
-        assert dim == self.dim, \
-            f'Dimensions do not match: {dim} query vs {self.dim} configured'
-        assert mask is not None, 'Mask is None, please specify a mask'
+        assert (
+            dim == self.dim
+        ), f"Dimensions do not match: {dim} query vs {self.dim} configured"
+        assert mask is not None, "Mask is None, please specify a mask"
         n_heads = self.n_heads
         dim_per_head = dim // n_heads
         scale = math.sqrt(dim_per_head)
@@ -655,11 +728,13 @@ class MultiHeadAttention(nn.Module):
             # input is [batch_size, seq_len, n_heads * dim_per_head]
             # output is [batch_size * n_heads, seq_len, dim_per_head]
             bsz, seq_len, _ = tensor.size()
-            tensor = tensor.view(batch_size, tensor.size(1), n_heads, dim_per_head)
-            tensor = tensor.transpose(1, 2).contiguous().view(
-                batch_size * n_heads,
-                seq_len,
-                dim_per_head
+            tensor = tensor.view(
+                batch_size, tensor.size(1), n_heads, dim_per_head
+            )
+            tensor = (
+                tensor.transpose(1, 2)
+                .contiguous()
+                .view(batch_size * n_heads, seq_len, dim_per_head)
             )
             return tensor
 
@@ -696,7 +771,8 @@ class MultiHeadAttention(nn.Module):
         attentioned = (
             attentioned.type_as(query)
             .view(batch_size, n_heads, query_len, dim_per_head)
-            .transpose(1, 2).contiguous()
+            .transpose(1, 2)
+            .contiguous()
             .view(batch_size, query_len, dim)
         )
 
