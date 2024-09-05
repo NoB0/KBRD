@@ -6,17 +6,19 @@
 """ Talk with a model using a web UI. """
 
 
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from parlai.scripts.interactive import setup_args
+
 from parlai.core.agents import create_agent
 from parlai.core.worlds import create_task
+from parlai.scripts.interactive import setup_args
 
-import json
-
-HOST_NAME = 'localhost'
-PORT = 8080
+HOST_NAME = "localhost"
+PORT = 5000
 SHARED = {}
-STYLE_SHEET = "https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.4/css/bulma.css"
+STYLE_SHEET = (
+    "https://cdnjs.cloudflare.com/ajax/libs/bulma/0.7.4/css/bulma.css"
+)
 FONT_AWESOME = "https://use.fontawesome.com/releases/v5.3.1/js/all.js"
 WEB_HTML = """
 <html>
@@ -136,76 +138,77 @@ class MyHandler(BaseHTTPRequestHandler):
 
     def interactive_running(self, opt, reply_text):
         reply = {}
-        reply['text'] = reply_text
-        SHARED['agent'].observe(reply)
-        model_res = SHARED['agent'].act()
+        reply["text"] = reply_text
+        SHARED["agent"].observe(reply)
+        model_res = SHARED["agent"].act()
         return model_res
 
     def do_HEAD(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header("Content-type", "text/html")
         self.end_headers()
 
     def do_POST(self):
-        if self.path != '/interact':
-            return self.respond({'status': 500})
+        if self.path != "/interact":
+            return self.respond({"status": 500})
 
-        content_length = int(self.headers['Content-Length'])
+        content_length = int(self.headers["Content-Length"])
         body = self.rfile.read(content_length)
         model_response = self.interactive_running(
-            SHARED.get('opt'),
-            body.decode('utf-8')
+            SHARED.get("opt"), body.decode("utf-8")
         )
 
         self.send_response(200)
-        self.send_header('Content-type', 'application/json')
+        self.send_header("Content-type", "application/json")
         self.end_headers()
         json_str = json.dumps(model_response)
-        self.wfile.write(bytes(json_str, 'utf-8'))
+        self.wfile.write(bytes(json_str, "utf-8"))
 
     def do_GET(self):
         paths = {
-            '/': {'status': 200},
-            '/favicon.ico': {'status': 202},    # Need for chrome
+            "/": {"status": 200},
+            "/favicon.ico": {"status": 202},  # Need for chrome
         }
         if self.path in paths:
             self.respond(paths[self.path])
         else:
-            self.respond({'status': 500})
+            self.respond({"status": 500})
 
     def handle_http(self, status_code, path, text=None):
         self.send_response(status_code)
-        self.send_header('Content-type', 'text/html')
+        self.send_header("Content-type", "text/html")
         self.end_headers()
         content = WEB_HTML.format(
             STYLE_SHEET,
             FONT_AWESOME,
         )
-        return bytes(content, 'UTF-8')
+        return bytes(content, "UTF-8")
 
     def respond(self, opts):
-        response = self.handle_http(opts['status'], self.path)
+        response = self.handle_http(opts["status"], self.path)
         self.wfile.write(response)
 
 
 def setup_interactive(shared):
     parser = setup_args()
-    SHARED['opt'] = parser.parse_args(print_args=True)
+    SHARED["opt"] = parser.parse_args(print_args=True)
 
-    SHARED['opt']['task'] = 'parlai.agents.local_human.local_human:LocalHumanAgent'
+    SHARED["opt"][
+        "task"
+    ] = "parlai.agents.local_human.local_human:LocalHumanAgent"
 
     # Create model and assign it to the specified task
-    SHARED['agent'] = create_agent(SHARED.get('opt'), requireModelExists=True)
-    SHARED['world'] = create_task(SHARED.get('opt'), SHARED['agent'])
+    SHARED["agent"] = create_agent(SHARED.get("opt"), requireModelExists=True)
+    SHARED["world"] = create_task(SHARED.get("opt"), SHARED["agent"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     setup_interactive(SHARED)
     server_class = HTTPServer
     Handler = MyHandler
-    Handler.protocol_version = 'HTTP/1.0'
+    Handler.protocol_version = "HTTP/1.0"
     httpd = server_class((HOST_NAME, PORT), Handler)
-    print('http://{}:{}/'.format(HOST_NAME, PORT))
+    print("http://{}:{}/".format(HOST_NAME, PORT))
 
     try:
         httpd.serve_forever()
