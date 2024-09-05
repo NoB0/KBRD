@@ -305,7 +305,6 @@ class TransformerRecGeneratorAgent(TorchGeneratorAgent):
         if obs.get("label_candidates", None) is None:
             # TODO: add movie detection based redial data
             dbpedia_entities_tuples = _text2entities(obs["text"])
-            print(f"DEBUG: {dbpedia_entities_tuples}")
             input_match = []
             entities_match = []
             for entity, is_movie in dbpedia_entities_tuples:
