@@ -119,6 +119,20 @@ I recently watched __unk__]
 python scripts/show_bias.py -mf saved/transformer_rec_both_rgcn_0
 ```
 
+### Interactive running
+
+To serve KRBD use the following command:
+
+```bash
+python -m parlai.scripts.interactive_web -t redial -mf saved/transformer_rec_both_rgcn_0
+```
+
+You can test if the model is served with:
+
+```bash
+curl -X POST 'http://localhost:5000/interact' -H 'Content-Type: application/json'   -d '{"text": "Recommend me an action movie with Tom Cruise"}'
+```
+
 ## ❗ Common Q&A
 
 1. Understanding model outputs.
