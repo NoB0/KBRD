@@ -300,7 +300,6 @@ class TransformerRecGeneratorAgent(TorchGeneratorAgent):
         if "text" not in obs:
             return obs
 
-        print(f"DEBUG input text: {obs['text']}")
         # Quick fix for interactive mode
         # Movies and entities are detected using DBpedia Spotlight on the fly
         if obs.get("label_candidates", None) is None:
@@ -316,7 +315,6 @@ class TransformerRecGeneratorAgent(TorchGeneratorAgent):
                         input_match.append(entity_id)
                     else:
                         entities_match.append(entity_id)
-            print(f"DEBUG: {input_match}\n{entities_match}")
         else:
             # match movies and entities
             input_match = list(map(int, obs["label_candidates"][1].split()))
